@@ -74,28 +74,6 @@ class LifeCycleTest extends BddTest {
 
 
     @Test
-    void ifClientsAreAlreadyRunningCanAddShutdownHooks() throws Exception  {
-        assertShutdownHooks(0);
-
-        Unirest.get(MockServer.GET).asEmpty();
-        Unirest.get(MockServer.GET).asEmptyAsync();
-        Unirest.config().addShutdownHook(true);
-        Unirest.config().addShutdownHook(true);
-
-        assertShutdownHooks(1);
-    }
-
-    @Test
-    void canAddShutdownHooks() throws Exception {
-        assertShutdownHooks(0);
-
-        Unirest.config().addShutdownHook(true).getClient();
-        Unirest.config().addShutdownHook(true).getAsyncClient();
-
-        assertShutdownHooks(1);
-    }
-
-    @Test
     void settingClientAfterClientHasAlreadyBeenSet() {
         HttpClientMock httpClientMock = new HttpClientMock();
         httpClientMock.onGet("http://localhost/getme").doReturn(202, "Howdy Ho!");
@@ -146,15 +124,6 @@ class LifeCycleTest extends BddTest {
         assertNotSame(Unirest.spawnInstance(), Unirest.spawnInstance());
     }
 
-    @Test
-    void shouldReuseThreadPool() {
-        int startingCount = ManagementFactory.getThreadMXBean().getThreadCount();
-        IntStream.range(0,100).forEach(i -> {
-            Unirest.config().reset().getClient();
-            Unirest.config().getAsyncClient();
-        });
-        assertThat(ManagementFactory.getThreadMXBean().getThreadCount(), is(lessThanOrEqualTo(startingCount + 10)));
-    }
 
     @Test
     void testUnirestInstanceIsShutdownWhenClosed() {

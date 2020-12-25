@@ -16,6 +16,11 @@
     </properties>
 
     <dependencies>
+<!--        <dependency>-->
+<!--            <groupId>com.github.mizosoft.methanol</groupId>-->
+<!--            <artifactId>methanol</artifactId>-->
+<!--            <version>1.4.1</version>-->
+<!--        </dependency>-->
         <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>

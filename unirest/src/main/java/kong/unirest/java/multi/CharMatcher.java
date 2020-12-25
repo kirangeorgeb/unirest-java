@@ -23,34 +23,45 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-package kong.unirest;
+package kong.unirest.java.multi;
 
-import java.io.File;
 
-public class FilePart extends BodyPart<File> {
-    private String fileName;
+import static kong.unirest.java.multi.Validate.requireArgument;
 
-    public FilePart(File file, String name) {
-        this(file, name, null);
+/** Simple char matching API to use internally. */
+public interface CharMatcher {
+
+    boolean matches(char c);
+
+    default boolean allMatch(String s) {
+        return s.chars().allMatch(i -> matches((char) i));
     }
 
-    public FilePart(File file, String name, String contentType) {
-        super(file, name, contentType);
-        this.fileName = file.getName();
+    default CharMatcher or(CharMatcher other) {
+        return c -> matches(c) || other.matches(c);
     }
 
-    @Override
-    public boolean isFile() {
-        return true;
+    static CharMatcher alpha() {
+        return c -> {
+            char lower = Character.toLowerCase(c);
+            return lower >= 'a' && lower <= 'z';
+        };
     }
 
-    @Override
-    public String getFileName(){
-        return this.fileName;
+    static CharMatcher num() {
+        return c -> c >= '0' && c <= '9';
     }
 
-    @Override
-    public String toString() {
-        return String.format("%s=%s", getName(), fileName);
+    static CharMatcher alphaNum() {
+        return alpha().or(num());
+    }
+
+    static CharMatcher chars(String chars) {
+        return c -> chars.indexOf(c) >= 0;
+    }
+
+    static CharMatcher closedRange(int c1, int c2) {
+        requireArgument((c1 | c2 | (c2 - c1)) >= 0, "illegal range[%d, %d]", c1, c2);
+        return c -> c >= c1 && c <= c2;
     }
 }

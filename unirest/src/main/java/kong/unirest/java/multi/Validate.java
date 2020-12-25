@@ -23,34 +23,25 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-package kong.unirest;
+package kong.unirest.java.multi;
 
-import java.io.File;
 
-public class FilePart extends BodyPart<File> {
-    private String fileName;
+import static java.lang.String.format;
 
-    public FilePart(File file, String name) {
-        this(file, name, null);
+
+public class Validate {
+
+    public static void requireArgument(boolean argIsValid, String msg) {
+        if (!argIsValid) {
+            throw new IllegalArgumentException(msg);
+        }
+    }
+    
+    public static void requireArgument(boolean argIsValid, String msgFormat, Object... args) {
+        if (!argIsValid) {
+            throw new IllegalArgumentException(format(msgFormat, args));
+        }
     }
 
-    public FilePart(File file, String name, String contentType) {
-        super(file, name, contentType);
-        this.fileName = file.getName();
-    }
 
-    @Override
-    public boolean isFile() {
-        return true;
-    }
-
-    @Override
-    public String getFileName(){
-        return this.fileName;
-    }
-
-    @Override
-    public String toString() {
-        return String.format("%s=%s", getName(), fileName);
-    }
 }

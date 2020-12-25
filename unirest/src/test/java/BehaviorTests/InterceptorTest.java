@@ -107,56 +107,11 @@ class InterceptorTest extends BddTest {
         assertEquals(ioErrorMessage, response.getStatusText());
     }
 
-    @Test
-    void totalAsyncFailure() throws Exception {
-        Unirest.config().addInterceptor((r, c) -> {
-            throw new IOException(ioErrorMessage);
-        }).interceptor(interceptor);
-
-        TestUtil.assertException(() -> Unirest.get(MockServer.GET).asStringAsync().get(),
-                ExecutionException.class,
-                "java.io.IOException: " + ioErrorMessage);
-    }
-
-    @Test
-    void totalAsyncFailure_Recovery() throws Exception {
-        interceptor.failResponse = true;
-        Unirest.config().addInterceptor((r, c) -> {
-            throw new IOException(ioErrorMessage);
-        }).interceptor(interceptor);
-
-        HttpResponse<String> response = Unirest.get(MockServer.GET).asStringAsync().get();
-
-        assertEquals(542, response.getStatus());
-        assertEquals(ioErrorMessage, response.getStatusText());
-    }
-
     private HttpClient getFailureClient() throws IOException {
         HttpClient client = mock(HttpClient.class);
         when(client.execute(any(HttpHost.class), any(HttpUriRequest.class))).thenThrow(new IOException(ioErrorMessage));
         when(client.execute(any(HttpUriRequest.class))).thenThrow(new IOException(ioErrorMessage));
         return client;
-    }
-
-    @Test @Deprecated
-    void canAddApacheInterceptor() {
-        Unirest.config().addInterceptor(new TestInterceptor());
-
-        Unirest.get(MockServer.GET)
-                .asObject(RequestCapture.class)
-                .getBody()
-                .assertHeader("x-custom", "foo");
-    }
-
-    @Test @Deprecated
-    void canAddApacheInterceptorToAsync() throws ExecutionException, InterruptedException {
-        Unirest.config().addInterceptor(new TestInterceptor());
-
-        Unirest.get(MockServer.GET)
-                .asObjectAsync(RequestCapture.class)
-                .get()
-                .getBody()
-                .assertHeader("x-custom", "foo");
     }
 
     @Test
@@ -177,13 +132,6 @@ class InterceptorTest extends BddTest {
                 .asEmpty();
 
         assertEquals(newHashSet("file=spidey.jpg","fruit=apples"), values);
-    }
-
-    private class TestInterceptor implements HttpRequestInterceptor {
-        @Override
-        public void process(org.apache.http.HttpRequest httpRequest, org.apache.http.protocol.HttpContext httpContext) throws HttpException, IOException {
-            httpRequest.addHeader("x-custom", "foo");
-        }
     }
 
     private class UniInterceptor implements Interceptor {

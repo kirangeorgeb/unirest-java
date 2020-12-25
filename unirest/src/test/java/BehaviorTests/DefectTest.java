@@ -66,26 +66,6 @@ class DefectTest extends BddTest {
     }
 
 
-    @Test
-    void issue_41_IllegalThreadStateExceptionUnderHighLoad() throws IOException {
-        Unirest.get(MockServer.GET).asStringAsync();
-
-        HttpAsyncClient first = Unirest.config().getAsyncClient().getClient();
-        IntStream.range(1, 50).forEach(i ->{
-            assertSame(first, Unirest.config().getAsyncClient().getClient());
-        });
-
-        ((CloseableHttpAsyncClient)Unirest.config().getAsyncClient().getClient()).close();
-        Unirest.get(MockServer.GET).asStringAsync();
-
-        HttpAsyncClient second = Unirest.config().getAsyncClient().getClient();
-        assertNotSame(first, second);
-
-        IntStream.range(1, 50).forEach(i ->{
-            assertSame(second, Unirest.config().getAsyncClient().getClient());
-        });
-    }
-
     @Test @Disabled
     void trySomeoneElsesGZip() throws Exception {
         JSONObject body = Unirest.get("http://httpbin.org/gzip")
