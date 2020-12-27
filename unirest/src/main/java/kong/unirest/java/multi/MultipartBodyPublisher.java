@@ -26,10 +26,10 @@
 package kong.unirest.java.multi;
 
 
+import kong.unirest.ProgressMonitor;
 import kong.unirest.UnirestException;
 
 import java.io.FileNotFoundException;
-import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.nio.ByteBuffer;
@@ -38,7 +38,6 @@ import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow.Subscriber;
@@ -58,35 +57,23 @@ public final class MultipartBodyPublisher implements BodyPublisher {
     private static final long UNKNOWN_LENGTH = -1;
     private static final long UNINITIALIZED_LENGTH = -2;
 
-    private static final String BOUNDARY_ATTRIBUTE = "boundary";
-
-    private final List<MultipartBodyPublisher.Part> parts;
-    private final MediaType mediaType;
+    private final List<Part> parts;
+    private final ProgressMonitor monitor;
+    private final String boundary = UUID.randomUUID().toString();
     private long contentLength;
 
-    private MultipartBodyPublisher(List<MultipartBodyPublisher.Part> parts, MediaType mediaType) {
+    private MultipartBodyPublisher(List<Part> parts, ProgressMonitor monitor) {
         this.parts = parts;
-        this.mediaType = mediaType;
+        this.monitor = monitor;
         contentLength = UNINITIALIZED_LENGTH;
     }
 
-    public static PartPublisher ofMediaType(BodyPublisher bodyPublisher, MediaType mediaType) {
-        return new PartPublisher(bodyPublisher, mediaType);
-    }
-
-    /** Returns the boundary of this multipart body. */
     public String boundary() {
-        return mediaType.parameters().get(BOUNDARY_ATTRIBUTE);
+        return boundary;
     }
 
-    /** Returns an immutable list containing this body's parts. */
-    public List<MultipartBodyPublisher.Part> parts() {
+    public List<Part> parts() {
         return parts;
-    }
-
-
-    public MediaType mediaType() {
-        return mediaType;
     }
 
     @Override
@@ -102,7 +89,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
     @Override
     public void subscribe(Subscriber<? super ByteBuffer> subscriber) {
         requireNonNull(subscriber);
-        new MultipartSubscription(this, subscriber).signal(true); // apply onSubscribe
+        new MultipartSubscription(this.boundary, this.parts, monitor, subscriber).signal(true);
     }
 
     private long computeLength() {
@@ -110,7 +97,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
         String boundary = boundary();
         StringBuilder headings = new StringBuilder();
         for (int i = 0, sz = parts.size(); i < sz; i++) {
-            MultipartBodyPublisher.Part part = parts.get(i);
+            Part part = parts.get(i);
             long partLength = part.bodyPublisher().contentLength();
             if (partLength < 0) {
                 return UNKNOWN_LENGTH;
@@ -126,8 +113,8 @@ public final class MultipartBodyPublisher implements BodyPublisher {
         return lengthOfParts + UTF_8.encode(CharBuffer.wrap(headings)).remaining();
     }
 
-    public static void appendPartHeaders(StringBuilder target, MultipartBodyPublisher.Part part) {
-        part.headers().map().forEach((n, vs) -> vs.forEach(v -> appendHeader(target, n, v)));
+    public static void appendPartHeaders(StringBuilder target, Part part) {
+        part.headers().all().forEach(h -> appendHeader(target, h.getName(), h.getValue()));
         BodyPublisher publisher = part.bodyPublisher();
         if (publisher instanceof PartPublisher) {
             appendHeader(target, "Content-Type", ((PartPublisher) publisher).mediaType().toString());
@@ -143,59 +130,12 @@ public final class MultipartBodyPublisher implements BodyPublisher {
         return new MultipartBodyPublisher.Builder();
     }
 
-    /** Represents a part in a multipart request body. */
-    public static final class Part {
-
-        private final HttpHeaders headers;
-        private final BodyPublisher bodyPublisher;
-
-        Part(HttpHeaders headers, BodyPublisher bodyPublisher) {
-            requireNonNull(headers, "headers");
-            requireNonNull(bodyPublisher, "bodyPublisher");
-
-            this.headers = headers;
-            this.bodyPublisher = bodyPublisher;
-        }
-
-        /** Returns the headers of this part. */
-        public HttpHeaders headers() {
-            return headers;
-        }
-
-        /** Returns the {@code BodyPublisher} that publishes this part's content. */
-        public BodyPublisher bodyPublisher() {
-            return bodyPublisher;
-        }
-
-        public static MultipartBodyPublisher.Part create(HttpHeaders headers, BodyPublisher bodyPublisher) {
-            return new MultipartBodyPublisher.Part(headers, bodyPublisher);
-        }
-
-    }
-
-
     public static final class Builder {
 
-        private static final String MULTIPART_TYPE = "multipart";
-        private static final String FORM_DATA_SUBTYPE = "form-data";
-
-        private final List<MultipartBodyPublisher.Part> parts;
-        private MediaType mediaType;
+        private final List<Part> parts;
 
         Builder() {
             parts = new ArrayList<>();
-            mediaType = MediaType.of(MULTIPART_TYPE, FORM_DATA_SUBTYPE);
-        }
-
-        /**
-         * Adds the given part.
-         *
-         * @param part the part
-         */
-        public MultipartBodyPublisher.Builder part(MultipartBodyPublisher.Part part) {
-            requireNonNull(part);
-            parts.add(part);
-            return this;
         }
 
         /**
@@ -207,7 +147,8 @@ public final class MultipartBodyPublisher implements BodyPublisher {
         public MultipartBodyPublisher.Builder formPart(String name, BodyPublisher bodyPublisher) {
             requireNonNull(name, "name");
             requireNonNull(bodyPublisher, "body");
-            return part(MultipartBodyPublisher.Part.create(getFormHeaders(name, null), bodyPublisher));
+            parts.add(new Part(name, null, bodyPublisher));
+            return this;
         }
 
         /**
@@ -221,7 +162,8 @@ public final class MultipartBodyPublisher implements BodyPublisher {
             requireNonNull(name, "name");
             requireNonNull(filename, "filename");
             requireNonNull(body, "body");
-            return part(MultipartBodyPublisher.Part.create(getFormHeaders(name, filename), body));
+            parts.add(new Part(name, filename, body));
+            return this;
         }
 
         /**
@@ -261,7 +203,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
          * @param mediaType the part's media type
          * @throws FileNotFoundException if a file with the given path cannot be found
          */
-        public MultipartBodyPublisher.Builder filePart(String name, Path file, MediaType mediaType)
+        public MultipartBodyPublisher.Builder filePart(String name, Path file, String mediaType)
                 throws FileNotFoundException {
             requireNonNull(name, "name");
             requireNonNull(file, "file");
@@ -269,7 +211,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
             Path filenameComponent = file.getFileName();
             String filename = filenameComponent != null ? filenameComponent.toString() : "";
             PartPublisher publisher =
-                    ofMediaType(BodyPublishers.ofFile(file), mediaType);
+                    new PartPublisher(BodyPublishers.ofFile(file), mediaType);
             return formPart(name, filename, publisher);
         }
 
@@ -279,39 +221,12 @@ public final class MultipartBodyPublisher implements BodyPublisher {
          *
          * @throws IllegalStateException if no part was added
          */
-        public MultipartBodyPublisher build() {
-            List<MultipartBodyPublisher.Part> addedParts = List.copyOf(parts);
+        public MultipartBodyPublisher build(ProgressMonitor monitor) {
+            List<Part> addedParts = List.copyOf(parts);
             if (!!addedParts.isEmpty()) {
                 throw new UnirestException("at least one part should be added");
             }
-            MediaType localMediaType = mediaType;
-            if (!localMediaType.parameters().containsKey(BOUNDARY_ATTRIBUTE)) {
-                localMediaType =
-                        localMediaType.withParameter(BOUNDARY_ATTRIBUTE, UUID.randomUUID().toString());
-            }
-            return new MultipartBodyPublisher(addedParts, localMediaType);
-        }
-
-        private static HttpHeaders getFormHeaders(String name, String filename) {
-            StringBuilder disposition = new StringBuilder();
-            appendEscaped(disposition.append("form-data; name="), name);
-            if (filename != null) {
-                appendEscaped(disposition.append("; filename="), filename);
-            }
-            return HttpHeaders.of(
-                    Map.of("Content-Disposition", List.of(disposition.toString())), (n, v) -> true);
-        }
-
-        private static void appendEscaped(StringBuilder target, String field) {
-            target.append("\"");
-            for (int i = 0, len = field.length(); i < len; i++) {
-                char c = field.charAt(i);
-                if (c == '\\' || c == '\"') {
-                    target.append('\\');
-                }
-                target.append(c);
-            }
-            target.append("\"");
+            return new MultipartBodyPublisher(addedParts, monitor);
         }
     }
 }

@@ -31,22 +31,18 @@ import java.net.http.HttpRequest.BodyPublisher;
 import java.nio.ByteBuffer;
 import java.util.concurrent.Flow;
 
-public final class PartPublisher implements BodyPublisher {
+public class PartPublisher implements BodyPublisher {
 
-    private final MediaType mediaType;
+    private final String mediaType;
     private final BodyPublisher upstream;
 
-    public PartPublisher(BodyPublisher upstream, MediaType mediaType) {
+    public PartPublisher(BodyPublisher upstream, String mediaType) {
         this.upstream = upstream;
         this.mediaType = requireNonNull(mediaType);
     }
 
-    public MediaType mediaType() {
+    public String mediaType() {
         return mediaType;
-    }
-
-    protected final BodyPublisher upstream() {
-        return upstream;
     }
 
     @Override

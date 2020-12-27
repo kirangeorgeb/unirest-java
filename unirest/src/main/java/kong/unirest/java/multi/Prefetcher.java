@@ -27,7 +27,7 @@ package kong.unirest.java.multi;
 
 
 /** Simple class for encapsulating prefetch logic used across subscribers. */
-public final class Prefetcher {
+class Prefetcher {
 
     public static final int PREFETCH = 16;
     public static final int PREFETCH_THRESHOLD = (int) (PREFETCH * (50 / 100f));

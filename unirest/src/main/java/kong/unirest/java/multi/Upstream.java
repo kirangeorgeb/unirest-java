@@ -31,7 +31,7 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.Flow.Subscription;
 
 /** A one-use atomic reference to an upstream subscription. */
-public final class Upstream {
+class Upstream {
 
     // A subscription that does nothing
     public static final Subscription NOOP_SUBSCRIPTION =

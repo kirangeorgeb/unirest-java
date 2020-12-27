@@ -26,8 +26,8 @@
 package kong.unirest.java;
 
 import kong.unirest.*;
-import kong.unirest.java.multi.MediaType;
 import kong.unirest.java.multi.MultipartBodyPublisher;
+import kong.unirest.java.multi.PartPublisher;
 import org.apache.http.HttpHeaders;
 
 import java.io.File;
@@ -83,7 +83,7 @@ public class BodyBuilder {
                 setMultiPart(o, builder, part);
             });
 
-            MultipartBodyPublisher build = builder.build();
+            MultipartBodyPublisher build = builder.build(o.getMonitor());
             request.header("Content-Type", "multipart/form-data; boundary=" + build.boundary());
             return build;
         } catch (Exception e) {
@@ -117,9 +117,6 @@ public class BodyBuilder {
         }
     }
 
-    private boolean allPartsAreStrings(Body o) {
-        return o.multiParts().stream().noneMatch(p -> p.isFile());
-    }
 
     private void setMultiPart(Body o, MultipartBodyPublisher.Builder builder, BodyPart part) {
         if (part.isFile()) {
@@ -127,26 +124,23 @@ public class BodyBuilder {
                 try {
                     builder.filePart(part.getName(),
                             ((File) part.getValue()).toPath(),
-                            MediaType.parse(part.getContentType()));
+                            part.getContentType());
                 } catch (FileNotFoundException e) {
                     throw new UnirestException(e);
                 }
             } else if (part instanceof InputStreamPart) {
                 if (part.getFileName() != null) {
                     builder.formPart(part.getName(), standardizeName(part, o.getMode()),
-                            MultipartBodyPublisher.ofMediaType(HttpRequest.BodyPublishers.ofInputStream(() -> (InputStream) part.getValue()),
-                                    MediaType.parse(part.getContentType())));
+                            new PartPublisher(HttpRequest.BodyPublishers.ofInputStream(() -> (InputStream) part.getValue()), part.getContentType()));
                 } else {
                     builder.formPart(part.getName(),
-                            MultipartBodyPublisher.ofMediaType(HttpRequest.BodyPublishers.ofInputStream(() -> (InputStream) part.getValue()),
-                                    MediaType.parse(part.getContentType())));
+                            new PartPublisher(HttpRequest.BodyPublishers.ofInputStream(() -> (InputStream) part.getValue()), part.getContentType()));
                 }
 
             } else if (part instanceof ByteArrayPart) {
                 builder.formPart(part.getName(),
                         standardizeName(part, o.getMode()),
-                        MultipartBodyPublisher.ofMediaType(HttpRequest.BodyPublishers.ofByteArray((byte[]) part.getValue()),
-                                MediaType.parse(part.getContentType())));
+                        new PartPublisher(HttpRequest.BodyPublishers.ofByteArray((byte[]) part.getValue()), part.getContentType()));
             }
         } else {
             builder.textPart(part.getName(), String.valueOf(part.getValue()));

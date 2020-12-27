@@ -1,4 +1,31 @@
+/**
+ * The MIT License
+ *
+ * Copyright for portions of unirest-java are held by Kong Inc (c) 2013.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
 package kong.unirest.java.multi;
+
+import kong.unirest.ProgressMonitor;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -51,9 +78,10 @@ final class MultipartSubscription implements Flow.Subscription {
             };
 
     private final String boundary;
-    private final List<MultipartBodyPublisher.Part> parts;
+    private final List<Part> parts;
     private int partIndex;
     private boolean complete;
+    private final ProgressMonitor monitor;
     private final Flow.Subscriber<? super ByteBuffer> downstream;
     private final Executor executor;
 
@@ -63,12 +91,12 @@ final class MultipartSubscription implements Flow.Subscription {
     private volatile long demand;
     private volatile Throwable pendingError;
 
-    MultipartSubscription(
-            MultipartBodyPublisher upstream, Flow.Subscriber<? super ByteBuffer> downstream) {
+    MultipartSubscription(String boundary, List<Part> parts, ProgressMonitor monitor, Flow.Subscriber<? super ByteBuffer> downstream) {
+        this.monitor = monitor;
         this.downstream = downstream;
         this.executor = MultipartBodyPublisher.SYNC_EXECUTOR;
-        boundary = upstream.boundary();
-        parts = upstream.parts();
+        this.boundary = boundary;
+        this.parts = parts;
     }
 
 
@@ -298,6 +326,7 @@ final class MultipartSubscription implements Flow.Subscription {
     }
 
     private ByteBuffer pollNext() {
+
         Flow.Subscriber<ByteBuffer> subscriber = partSubscriber;
         if (subscriber instanceof PartSubscriber) { // not cancelled & not null
             ByteBuffer next = ((PartSubscriber) subscriber).pollNext();
@@ -312,7 +341,7 @@ final class MultipartSubscription implements Flow.Subscription {
         StringBuilder heading = new StringBuilder();
         BoundaryAppender.get(partIndex, parts.size()).append(heading, boundary);
         if (partIndex < parts.size()) {
-            MultipartBodyPublisher.Part part = parts.get(partIndex++);
+            Part part = parts.get(partIndex++);
             if (!subscribeToPart(part)) {
                 return null;
             }
@@ -325,7 +354,7 @@ final class MultipartSubscription implements Flow.Subscription {
         return UTF_8.encode(CharBuffer.wrap(heading));
     }
 
-    private boolean subscribeToPart(MultipartBodyPublisher.Part part) {
+    private boolean subscribeToPart(Part part) {
         PartSubscriber subscriber = new PartSubscriber(this);
         Flow.Subscriber<ByteBuffer> current = partSubscriber;
         if (current != CANCELLED_SUBSCRIBER && PART_SUBSCRIBER.compareAndSet(this, current, subscriber)) {
