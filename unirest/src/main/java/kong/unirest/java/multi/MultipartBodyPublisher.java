@@ -36,8 +36,6 @@ import static kong.unirest.java.multi.Validate.requireArgument;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpRequest.BodyPublishers;
@@ -50,7 +48,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow.Subscriber;
 import java.util.concurrent.Flow.Subscription;
@@ -112,7 +109,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
     @Override
     public void subscribe(Subscriber<? super ByteBuffer> subscriber) {
         requireNonNull(subscriber);
-        new MultipartBodyPublisher.MultipartSubscription(this, subscriber).signal(true); // apply onSubscribe
+        new MultipartSubscription(this, subscriber).signal(true); // apply onSubscribe
     }
 
     private long computeLength() {
@@ -127,16 +124,16 @@ public final class MultipartBodyPublisher implements BodyPublisher {
             }
             lengthOfParts += partLength;
             // Append preceding boundary + part header
-            MultipartBodyPublisher.BoundaryAppender.get(i, sz).append(headings, boundary);
+            BoundaryAppender.get(i, sz).append(headings, boundary);
             appendPartHeaders(headings, part);
             headings.append("\r\n");
         }
-        MultipartBodyPublisher.BoundaryAppender.LAST.append(headings, boundary);
+        BoundaryAppender.LAST.append(headings, boundary);
         // Use headings' utf8-encoded length
         return lengthOfParts + UTF_8.encode(CharBuffer.wrap(headings)).remaining();
     }
 
-    private static void appendPartHeaders(StringBuilder target, MultipartBodyPublisher.Part part) {
+    public static void appendPartHeaders(StringBuilder target, MultipartBodyPublisher.Part part) {
         part.headers().map().forEach((n, vs) -> vs.forEach(v -> appendHeader(target, n, v)));
         BodyPublisher publisher = part.bodyPublisher();
         if (publisher instanceof PartPublisher) {
@@ -401,234 +398,6 @@ public final class MultipartBodyPublisher implements BodyPublisher {
                 // Use OCTET_STREAM
             }
             return MediaType.APPLICATION_OCTET_STREAM;
-        }
-    }
-
-    /** Used by {@code ProgressTracker} to peek part info from a {@code MultipartSubscription}. */
-    interface PartPeeker {
-
-        int peekIndex();
-
-        MultipartBodyPublisher.Part at(int index);
-
-        static MultipartBodyPublisher.PartPeeker peeking(Subscription subscription) {
-            requireArgument(
-                    subscription instanceof MultipartBodyPublisher.MultipartSubscription, "not a multipart subscription");
-            return ((MultipartBodyPublisher.MultipartSubscription) subscription).partPeeker();
-        }
-    }
-
-    /** Strategy for appending the boundary across parts. */
-    private enum BoundaryAppender {
-        FIRST("--", "\r\n"),
-        MIDDLE("\r\n--", "\r\n"),
-        LAST("\r\n--", "--\r\n");
-
-        private final String prefix;
-        private final String suffix;
-
-        BoundaryAppender(String prefix, String suffix) {
-            this.prefix = prefix;
-            this.suffix = suffix;
-        }
-
-        void append(StringBuilder target, String boundary) {
-            target.append(prefix).append(boundary).append(suffix);
-        }
-
-        static MultipartBodyPublisher.BoundaryAppender get(int partIndex, int partsSize) {
-            return partIndex <= 0 ? FIRST : (partIndex >= partsSize ? LAST : MIDDLE);
-        }
-    }
-
-    private static final class MultipartSubscription extends AbstractSubscription<ByteBuffer> {
-
-        private static final VarHandle PART_SUBSCRIBER;
-
-        static {
-            try {
-                PART_SUBSCRIBER =
-                        MethodHandles.lookup()
-                                .findVarHandle(MultipartBodyPublisher.MultipartSubscription.class, "partSubscriber", Subscriber.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
-
-        // A tombstone to protect against race conditions that would otherwise occur if a
-        // thread tries to abort() while another tries to nextPartHeaders(), which might lead
-        // to a newly subscribed part being missed by abort().
-        private static final Subscriber<ByteBuffer> CANCELLED =
-                new Subscriber<>() {
-                    @Override public void onSubscribe(Subscription subscription) {}
-                    @Override public void onNext(ByteBuffer item) {}
-                    @Override public void onError(Throwable throwable) {}
-                    @Override public void onComplete() {}
-                };
-
-        private final String boundary;
-        private final List<MultipartBodyPublisher.Part> parts;
-        private volatile Subscriber<ByteBuffer> partSubscriber;
-        private int partIndex;
-        private boolean complete;
-
-        MultipartSubscription(
-                MultipartBodyPublisher upstream, Subscriber<? super ByteBuffer> downstream) {
-            super(downstream, SYNC_EXECUTOR);
-            boundary = upstream.boundary();
-            parts = upstream.parts();
-        }
-
-        // The peeker is called serially (within downstream's onNext)
-        // by ProgressTracker so no need for synchronization.
-        MultipartBodyPublisher.PartPeeker partPeeker() {
-            return new MultipartBodyPublisher.PartPeeker() {
-                @Override
-                public int peekIndex() {
-                    // subtract 1 as partIndex actually indicates the next part to subscribe, not the current
-                    return Math.max(0, partIndex - 1);
-                }
-
-                @Override
-                public MultipartBodyPublisher.Part at(int index) {
-                    return parts.get(index);
-                }
-            };
-        }
-
-        @Override
-        protected long emit(Subscriber<? super ByteBuffer> downstream, long emit) {
-            long submitted = 0L;
-            while (true) {
-                ByteBuffer batch;
-                if (complete) {
-                    cancelOnComplete(downstream);
-                    return 0;
-                } else if (submitted >= emit
-                        || (batch = pollNext()) == null) { // exhausted demand or batches
-                    return submitted;
-                } else if (submitOnNext(downstream, batch)) {
-                    submitted++;
-                } else {
-                    return 0;
-                }
-            }
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        protected void abort(boolean flowInterrupted) {
-            Subscriber<ByteBuffer> previous =
-                    (Subscriber<ByteBuffer>) PART_SUBSCRIBER.getAndSet(this, CANCELLED);
-            if (previous instanceof MultipartBodyPublisher.PartSubscriber) {
-                ((MultipartBodyPublisher.PartSubscriber) previous).abortUpstream(flowInterrupted);
-            }
-        }
-
-        private ByteBuffer pollNext() {
-            Subscriber<ByteBuffer> subscriber = partSubscriber;
-            if (subscriber instanceof MultipartBodyPublisher.PartSubscriber) { // not cancelled & not null
-                ByteBuffer next = ((MultipartBodyPublisher.PartSubscriber) subscriber).pollNext();
-                if (next != MultipartBodyPublisher.PartSubscriber.END_OF_PART) {
-                    return next;
-                }
-            }
-            return subscriber != CANCELLED ? nextPartHeaders() : null;
-        }
-
-        private ByteBuffer nextPartHeaders() {
-            StringBuilder heading = new StringBuilder();
-            MultipartBodyPublisher.BoundaryAppender.get(partIndex, parts.size()).append(heading, boundary);
-            if (partIndex < parts.size()) {
-                MultipartBodyPublisher.Part part = parts.get(partIndex++);
-                if (!subscribeToPart(part)) {
-                    return null;
-                }
-                appendPartHeaders(heading, part);
-                heading.append("\r\n");
-            } else {
-                partSubscriber = CANCELLED; // race against abort() here is OK
-                complete = true;
-            }
-            return UTF_8.encode(CharBuffer.wrap(heading));
-        }
-
-        private boolean subscribeToPart(MultipartBodyPublisher.Part part) {
-            MultipartBodyPublisher.PartSubscriber subscriber = new MultipartBodyPublisher.PartSubscriber(this);
-            Subscriber<ByteBuffer> current = partSubscriber;
-            if (current != CANCELLED && PART_SUBSCRIBER.compareAndSet(this, current, subscriber)) {
-                part.bodyPublisher().subscribe(subscriber);
-                return true;
-            }
-            return false;
-        }
-    }
-
-    private static final class PartSubscriber implements Subscriber<ByteBuffer> {
-
-        static final ByteBuffer END_OF_PART = ByteBuffer.allocate(0);
-
-        private final MultipartBodyPublisher.MultipartSubscription downstream; // for signalling
-        private final ConcurrentLinkedQueue<ByteBuffer> buffers;
-        private final Upstream upstream;
-        private final Prefetcher prefetcher;
-
-        PartSubscriber(MultipartBodyPublisher.MultipartSubscription downstream) {
-            this.downstream = downstream;
-            buffers = new ConcurrentLinkedQueue<>();
-            upstream = new Upstream();
-            prefetcher = new Prefetcher();
-        }
-
-        @Override
-        public void onSubscribe(Subscription subscription) {
-            requireNonNull(subscription);
-            if (upstream.setOrCancel(subscription)) {
-                // The only possible concurrent access to prefetcher applies here.
-                // But the operation need not be atomic as other reads/writes
-                // are done serially when ByteBuffers are polled, which is only
-                // possible after this volatile write.
-                prefetcher.initialize(upstream);
-            }
-        }
-
-        @Override
-        public void onNext(ByteBuffer item) {
-            requireNonNull(item);
-            buffers.offer(item);
-            downstream.signal(false);
-        }
-
-        @Override
-        public void onError(Throwable throwable) {
-            requireNonNull(throwable);
-            abortUpstream(false);
-            downstream.signalError(throwable);
-        }
-
-        @Override
-        public void onComplete() {
-            abortUpstream(false);
-            buffers.offer(END_OF_PART);
-            downstream.signal(true); // force completion signal
-        }
-
-        void abortUpstream(boolean cancel) {
-            if (cancel) {
-                upstream.cancel();
-            } else {
-                upstream.clear();
-            }
-        }
-
-       
-        ByteBuffer pollNext() {
-            ByteBuffer next = buffers.peek();
-            if (next != null && next != END_OF_PART) {
-                buffers.poll(); // remove
-                prefetcher.update(upstream);
-            }
-            return next;
         }
     }
 }
