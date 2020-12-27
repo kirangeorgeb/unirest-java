@@ -342,9 +342,6 @@ public final class MediaType {
         requireNonNull(type, "type");
         requireNonNull(subtype, "subtype");
         requireNonNull(parameters, "parameters");
-        requireArgument(
-                !WILDCARD.equals(type) || WILDCARD.equals(subtype),
-                "cannot have a wildcard type with a concrete subtype");
         String normalizedType = normalizeToken(type);
         String normalizedSubtype = normalizeToken(subtype);
         for (var entry : parameters.entrySet()) {

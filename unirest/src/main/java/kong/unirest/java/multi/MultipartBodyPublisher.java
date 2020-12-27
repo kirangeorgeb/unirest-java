@@ -28,21 +28,13 @@ package kong.unirest.java.multi;
 
 import kong.unirest.UnirestException;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
-import static kong.unirest.java.multi.CharMatcher.alphaNum;
-import static kong.unirest.java.multi.CharMatcher.chars;
-import static kong.unirest.java.multi.Validate.requireArgument;
-
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,14 +42,15 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow.Subscriber;
-import java.util.concurrent.Flow.Subscription;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
 
 /**
  * A {@code BodyPublisher} implementing the multipart request type.
  *
  * @see <a href="https://tools.ietf.org/html/rfc2046#section-5.1">RFC 2046 Multipart Media Type</a>
  */
-@SuppressWarnings("ReferenceEquality") // ByteBuffer sentinel values
 public final class MultipartBodyPublisher implements BodyPublisher {
 
     // An executor that executes the runnable in the calling thread.
@@ -183,13 +176,6 @@ public final class MultipartBodyPublisher implements BodyPublisher {
 
     public static final class Builder {
 
-        // boundary     := 0*69<bchars> bcharnospace
-        // bchars       := bcharnospace / " "
-        // bcharnospace := DIGIT / ALPHA / "'" / "(" / ")" /
-        //                 "+" / "_" / "," / "-" / "." ?
-        //                 "/" / ":" / "=" / "?"
-        private static final CharMatcher BOUNDARY_MATCHER = chars("'()+_,-./:=? ").or(alphaNum());
-
         private static final String MULTIPART_TYPE = "multipart";
         private static final String FORM_DATA_SUBTYPE = "form-data";
 
@@ -199,31 +185,6 @@ public final class MultipartBodyPublisher implements BodyPublisher {
         Builder() {
             parts = new ArrayList<>();
             mediaType = MediaType.of(MULTIPART_TYPE, FORM_DATA_SUBTYPE);
-        }
-
-        /**
-         * Sets the boundary of the multipart body.
-         *
-         * @throws IllegalArgumentException if the boundary is invalid
-         */
-        public MultipartBodyPublisher.Builder boundary(String boundary) {
-            requireNonNull(boundary);
-            mediaType = mediaType.withParameter(BOUNDARY_ATTRIBUTE, validateBoundary(boundary));
-            return this;
-        }
-
-        /**
-         * Sets the media type of the multipart body. If the given media type has a boundary parameter
-         * then it will be used as the body's boundary.
-         *
-         * @param mediaType the multipart media type
-         * @throws IllegalArgumentException if the given media type is not a multipart type or if it has
-         *     an invalid boundary parameter
-         */
-        public MultipartBodyPublisher.Builder mediaType(MediaType mediaType) {
-            requireNonNull(mediaType);
-            this.mediaType = checkMediaType(mediaType);
-            return this;
         }
 
         /**
@@ -289,20 +250,7 @@ public final class MultipartBodyPublisher implements BodyPublisher {
             return formPart(name, BodyPublishers.ofString(value.toString(), charset));
         }
 
-        /**
-         * Adds a file form field with the given name and file. The field's filename property will be
-         * that of the given path's {@link Path#getFileName() filename compontent}. The given path will
-         * be used to {@link Files#probeContentType(Path) probe} the part's media type. If the probing
-         * operation fails, either by throwing an exception or returning {@code null}, {@code
-         * application/octet-stream} will be used.
-         *
-         * @param name the field's name
-         * @param file the file's path
-         * @throws FileNotFoundException if a file with the given path cannot be found
-         */
-        public MultipartBodyPublisher.Builder filePart(String name, Path file) throws FileNotFoundException {
-            return filePart(name, file, probeMediaType(file));
-        }
+
 
         /**
          * Adds a file form field with given name, file and media type. The field's filename property
@@ -344,28 +292,6 @@ public final class MultipartBodyPublisher implements BodyPublisher {
             return new MultipartBodyPublisher(addedParts, localMediaType);
         }
 
-        private static String validateBoundary(String boundary) {
-            requireArgument(
-                    boundary.length() <= 70 && !boundary.isEmpty(),
-                    "illegal boundary length: %s",
-                    boundary.length());
-            requireArgument(
-                    BOUNDARY_MATCHER.allMatch(boundary) && !boundary.endsWith(" "),
-                    "illegal boundary: '%s'",
-                    boundary);
-            return boundary;
-        }
-
-        private static MediaType checkMediaType(MediaType mediaType) {
-            requireArgument(
-                    MULTIPART_TYPE.equals(mediaType.type()), "not a multipart type: %s", mediaType.type());
-            String boundary = mediaType.parameters().get(BOUNDARY_ATTRIBUTE);
-            if (boundary != null) {
-                validateBoundary(boundary);
-            }
-            return mediaType;
-        }
-
         private static HttpHeaders getFormHeaders(String name, String filename) {
             StringBuilder disposition = new StringBuilder();
             appendEscaped(disposition.append("form-data; name="), name);
@@ -386,18 +312,6 @@ public final class MultipartBodyPublisher implements BodyPublisher {
                 target.append(c);
             }
             target.append("\"");
-        }
-
-        private static MediaType probeMediaType(Path file) {
-            try {
-                String contentType = Files.probeContentType(file);
-                if (contentType != null) {
-                    return MediaType.parse(contentType);
-                }
-            } catch (IOException ignored) {
-                // Use OCTET_STREAM
-            }
-            return MediaType.APPLICATION_OCTET_STREAM;
         }
     }
 }
